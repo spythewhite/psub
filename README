@@ -4,3 +4,7 @@ See psub.pdf for details on the implementation
 To run the tests:
 ./testall tests
 (assuming XSB is in your $PATH)
+
+To type-check your program with psub:
+1. Load XSB
+2. Compile the psub.P module: [psub].
