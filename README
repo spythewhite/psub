@@ -8,3 +8,4 @@ To run the tests:
 To type-check your program with psub:
 1. Load XSB
 2. Compile the psub.P module: [psub].
+3.
