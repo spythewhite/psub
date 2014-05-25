@@ -1,0 +1,10 @@
+% Ill-typed
+:- pred p(^T:integer).
+:- pred q(^T:number).
+:- pred t(^T:integer).
+%:- env e([r(1,[integer]),r(2,[integer]),r(3,[integer])]).
+:- res fail.
+
+p(X) :- q(X), t(X).
+q(_X) :- true.
+t(_X) :- true.

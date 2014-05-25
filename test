@@ -1,0 +1,3 @@
+#!/bin/bash
+
+xsb --quietload --nobanner --noprompt -e "['psub.P'], type_check_file(['$1']), halt."

@@ -1,0 +1,9 @@
+% Well-typed
+:- pred p(T:any).
+:- pred q(T:number).
+:- pred s(T:float).
+%:- env e([r(1,[]),r(2,[]),r(3,[])]).
+:- res ok.
+
+p(_) :- q(Y), s(Y).
+p(_) :- s(Y), q(Y).

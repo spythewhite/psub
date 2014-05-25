@@ -1,0 +1,11 @@
+% Well-typed
+:- pred len(list(T:any),S:integer).
+:- type [T:any|list(T:any)] -> list(T:any).
+:- type [] -> list(T:any).
+%:- env e([r(1,[])]).
+:- res ok.
+
+len([],0).
+len([_|Xs],N) :-
+        len(Xs,N1),
+        N is N1 + 1.

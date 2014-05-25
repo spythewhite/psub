@@ -1,0 +1,18 @@
+In order to (currently) use @apl{psub}, simply load @file{psub.P} in
+@apl{XSB}:
+
+@begin{verbatim}
+	|?- [psub].
+@end{verbatim}
+
+@noindent
+and then load your XSB source file:
+
+@begin{verbatim}
+	|?- [foo].
+@end{verbatim}
+
+@noindent
+Your source file will then be type checked, and an appropriate message
+will be printed out, depending on whether the program was well-typed,
+or ill-typed.

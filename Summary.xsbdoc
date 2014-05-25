@@ -1,0 +1,3 @@
+@apl{P<:} is a type system with @em{parametric} and @em{subtyping}
+polymorphism for Prolog. This module is an implementation of @apl{P<:}
+in XSB.

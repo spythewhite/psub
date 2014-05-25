@@ -1,0 +1,9 @@
+% Well-typed
+:- pred is(T:number,T:number).
+:- pred p(T:number).
+:- pred q(T:number).
+:- type +(T:number,T:number) -> T:number.
+%:- env e([r(1,[]),r(2,[])]).
+:- res ok.
+
+p(X) :- q(Y), X is Y + 1.

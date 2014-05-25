@@ -1,0 +1,7 @@
+% Well-typed
+% Flip the bounds to make ill-typed
+:- type [] -> list(T:atom).
+:- pred p(list(T:atomic)).
+:- res ok.
+
+p([]).

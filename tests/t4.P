@@ -1,0 +1,8 @@
+% Well-typed
+:- pred p(^T:atomic).
+%:- env e([r(1,[]),r(2,[]),r(3,[])]).
+:- res ok.
+
+p(42).
+p(3.14).
+p(a).

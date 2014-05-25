@@ -1,0 +1,12 @@
+% Ill-typed
+:- pred lwriteln(flist(T:any)).
+:- pred fast_write(T:any).
+:- type flist(T:number,flist(T:number)) -> flist(T:number).
+:- type flist -> flist(T:number).
+%:- env e([r(1,[])]).
+:- res fail.
+
+lwriteln(flist).
+lwriteln(flist(X,Xs)) :-
+        fast_write(X),
+        lwriteln(Xs).

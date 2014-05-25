@@ -1,0 +1,7 @@
+% Well-typed
+:- pred p(^T:number).
+:- pred q(^S:number).
+:- res ok.
+
+p(X) :- q(X).
+q(2) :- true.

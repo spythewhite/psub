@@ -1,0 +1,10 @@
+% Well-typed
+:- pred app(list(T:any),list(T:any),list(T:any)).
+:- type [T:any|list(T:any)] -> list(T:any).
+:- type [] -> list(T:any).
+%:- env e([r(1,[])]).
+:- res ok.
+
+app([],L,L).
+app([X|L1],L2,[X|L3]) :-
+        app(L1,L2,L3).

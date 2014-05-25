@@ -1,0 +1,4 @@
+#!/bin/bash
+# Make the manual
+
+xsb --quietload --nobanner --noprompt -e "['man'], gen, halt."

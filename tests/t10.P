@@ -1,0 +1,9 @@
+% Well-typed
+:- pred mem(T:any,list(T:any)).
+:- type [T:any|list(T:any)] -> list(T:any).
+%:- env e([r(1,[])]).
+:- res ok.
+
+mem(X,[X|_]).
+mem(X,[_|Y]) :-
+	mem(X,Y).

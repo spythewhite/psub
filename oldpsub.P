@@ -1,0 +1,554 @@
+/* An implementation of the P<: type system
+ * Instructions for use:
+ * 1. Launch XSB in current directory: $ xsb
+ * 2. Load any test file: |?- ['tests/t1.P'].
+ * After compiling, a message regarding the well- or ill-typedness of
+ * the loaded program will be printed out
+ */
+
+:- import member/2, length/2, append/3, memberchk/2, select/3, flatten/2 from basics.
+:- import excess_vars/4 from setof.
+:- import unnumbervars/3 from num_vars.
+:- import conset/2, conget/2, coninc/1 from gensym.
+:- import put_attr/3, get_attr/3, del_attr/2,
+        install_verify_attribute_handler/4,
+        verify_attribute_handler/4, 
+        install_attribute_portray_hook/3 from machine.
+:- install_attribute_portray_hook(psub,Attribute,write(Attribute)).
+
+:- table well_typed/2, type_from_env/3. %, typeof/2.
+
+:- op(1150, fx, type).
+:- op(1130, xfx, ---> ).
+:- op(1150, fx, pred).
+:- op(1150, fx, trust_pred).
+:- op(1150, fx, env).
+:- op(500,yfx,::).
+:- op(500,yfx,:<).
+:- op(500,xfx,<:).
+:- op(500,xfx,`).
+:- op(500,xfx,:^).
+
+% Subtype Checker
+:- table is_subtype/3.
+
+is_subtype(_,X,Y) :- var(X), var(Y), X == Y.
+
+is_subtype(G,S,T) :-
+        nonvar(S), nonvar(T),
+        is_subtype_def(G,S,T).
+
+find_in_env([V <: T|Env], V1, T1) :-
+        ( V == V1
+        -> T1 = T
+        ; find_in_env(Env,V1,T1)
+        ).
+is_subtype(_,_,T) :- T = any.
+
+is_subtype(G,X,T) :- 
+        var(X),
+        find_in_env(G,X,U),
+        is_subtype(G,U,T).
+
+is_subtype(G,S,T) :- nonvar(S), nonvar(T),
+        S = forall(X <: U,S2),
+        T = forall(X <: U,T2),
+        append(G,[X <: U], G1),
+        is_subtype(G1,S2,T2).
+
+is_subtype(G,S,T) :- nonvar(S), nonvar(T),
+        S = arrow(S1,S2),
+        T = arrow(T1,T2),
+        is_subtype(G,T1,S1),
+        is_subtype(G,T2,S2).
+
+is_subtype(G,T,R) :-
+       \+ is_list(T), \+ is_list(R),
+        (structure(T)
+	 ->	T =.. [Name|TArgs],
+		length(TArgs,N),
+		length(RArgs,N),
+		R =.. [Name|RArgs]
+	 ; structure(R)
+	 ->	R =.. [Name|RArgs],
+		length(RArgs,N),
+		length(TArgs,N),
+		T =.. [Name|TArgs]
+	 ;	fail
+        ),
+        is_subtype_list(G,TArgs,RArgs).
+
+is_subtype(G,T,R) :-
+        is_list(T), is_list(R),
+        is_subtype_list(G,T,R).
+
+is_subtype_list(_,[],[]).
+is_subtype_list(G,[T|Ts],[R|Rs]) :- 
+        is_subtype(G,T,R),
+        append(G,[T <: R],G1),
+        is_subtype1_list(G1,Ts,Rs).
+
+is_subtype1_list(G,X,Y) :-
+        same_length(X,Y), 
+        is_subtype_list(G,X,Y).
+
+same_length([],[]).
+same_length([_|L],[_|M]) :- same_length(L,M).
+
+is_subtype_def(_,integer,integer).
+is_subtype_def(_,integer,number).
+is_subtype_def(_,integer,atomic).
+is_subtype_def(_,float,float).
+is_subtype_def(_,float,number).
+is_subtype_def(_,float,atomic).
+is_subtype_def(_,atom,atom).
+is_subtype_def(_,atom,atomic).
+is_subtype_def(_,number,number).
+is_subtype_def(_,number,atomic).
+is_subtype_def(_,atomic,atomic).
+
+maplist(_,_,[],[]).
+maplist(Pred,Env,[In|Ins],[Out|Outs]) :-
+        call(Pred,Env,(In:Out)),
+        maplist(Pred,Env,Ins,Outs).
+
+maplist(_,[],[]).
+maplist(Pred,[X|Xs],[Y|Ys]) :-
+        call(Pred,X,Y),
+        maplist(Pred,Xs,Ys).
+
+maplist(_,[]).
+maplist(Pred,[Arg|Args]) :-
+	call(Pred,Arg),
+	maplist(Pred,Args).
+
+% Custom unification routine
+% Using attributed variables to model Attributed Type Variables
+% The attribute is an atv(EQ,U,E), where:
+% EQ = eq-atv attribute
+% U  = u-atv attribute
+% E  = e-atv attribute
+% At most one of these can be set at any given point in time
+subtype_unify(X,Y) :- 
+	%trace,
+        subtype_unify1(X,Y).
+
+% SubUnifV
+subtype_unify1(X,Y) :-
+	%writeln('V'),
+        is_attv(X), var(Y), \+ is_attv(Y),
+        X = Y.
+% SubUnifG
+subtype_unify1(X,Y) :-
+	%writeln('G'),
+	ground(X), var(Y), \+ is_attv(Y),
+	X = Y.
+% SubUnifVV
+subtype_unify1(X,Y) :-
+	%writeln('VV'),
+	is_attv(X), is_attv(Y), 
+	install_verify_attribute_handler(psub,AttrVal,Target,sunif_handlerVV(AttrVal,Target)),
+	X = Y.
+sunif_handlerVV(AttrVal,Target) :-
+	get_attr(Target,psub,atv(Attr,_,_)), nonvar(Attr),
+	AttrVal = atv(X,_,_), nonvar(X), 
+	X = Attr.
+sunif_handlerVV(AttrVal,Target) :-
+	get_attr(Target,psub,atv(Attr,_,_)), nonvar(Attr),
+	AttrVal = atv(_,_,X), nonvar(X), 
+	X = Attr.
+
+% SubUnifGV
+subtype_unify1(X,Y) :- 
+	%writeln('GV'),
+	ground(X), is_attv(Y),
+	get_attr(Y,psub,atv(T,_,_)), nonvar(T),
+	del_attr(Y,psub),
+	X = T, X = Y.
+% SubUnifVG
+subtype_unify1(X,Y) :-
+	%writeln('VG'),
+	is_attv(X), ground(Y),
+	get_attr(X,psub,atv(T,_,_)), nonvar(T),
+	del_attr(X,psub),
+	Y = T, X = Y.
+% SubUnifGG
+subtype_unify1(X,Y) :-
+	ground(X), ground(Y),
+	%writeln('GG'),
+	X = Y.
+% SubUnifUG
+subtype_unify1(X,Y) :-
+	%writeln('UG'),
+	ground(X), is_attv(Y),
+	get_attr(Y,psub,atv(_,S,_)), nonvar(S),
+	del_attr(Y,psub),
+	is_subtype([],X,S),
+	X = Y.
+% SubUnifEG
+subtype_unify1(X,Y) :- 
+	%writeln('EG'), 
+	ground(X), is_attv(Y), 
+	get_attr(Y,psub,atv(_,_,S)), nonvar(S),
+	del_attr(Y,psub),
+	is_subtype([],X,S),
+	X = Y.
+% SubUnifUAV, SubUnifEUV
+subtype_unify1(X,Y) :- 
+	%writeln('EUV'),
+	is_attv(X), is_attv(Y),	
+	install_verify_attribute_handler(psub,AttrVal,Target,sunif_handlerEUAV(AttrVal,Target)),
+	X = Y.
+%SubUnifUAV
+sunif_handlerEUAV(AttrVal,Target) :-
+	%writeln(AttrVal), writeln(Target),
+	get_attr(Target,psub,atv(S,_,_)), nonvar(S),
+	AttrVal = atv(_,T,_), nonvar(T),
+	%is_subtype([],T,S),
+	is_subtype([],S,T),
+	del_attr(Target,psub),
+	%put_attr(Target,psub,atv(T,_,_)).
+	put_attr(Target,psub,atv(S,_,_)).
+%SubUnifUEV
+/*
+sunif_handlerEUAV(AttrVal,Target) :-
+	writeln(AttrVal), writeln(Target),
+	get_attr(Target,psub,atv(T,_,_)), nonvar(T),
+	AttrVal = atv(_,_,S), nonvar(S), T = S,
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(T,_,_)).
+*/
+% For function symbols
+%SubUnifFUV
+subtype_unify1(X,Y) :-
+	is_attv(X), is_attv(Y),
+	get_attr(X,psub,atv(FT,_,_)), nonvar(FT),
+	get_attr(Y,psub,atv(_,FY,_)), nonvar(FY),
+	%writeln('FUV'),
+	functor(FT,Name,Arity), functor(FY,Name,Arity),
+	Arity > 0,
+	arg(1,FT,TArg), arg(1,FY,YArg),
+	del_attr(X,psub), del_attr(Y,psub),
+	put_attr(X,psub,atv(TArg,_,_)),
+	put_attr(Y,psub,atv(_,YArg,_)),
+	subtype_unify1(X,Y).
+
+%SubUnifFV
+subtype_unify1(X,Y) :-
+	%writeln('X'(X)), writeln('Y'(Y)),
+	%writeln('FV'(X,Y)),
+	is_attv(X), \+ var(Y),
+	get_attr(X,psub,atv(T,_,_)), nonvar(T),
+	%writeln('FV'), 
+	functor(T,Name,_), functor(Y,Name,_),
+	arg(1,T,TArg), arg(1,Y,YArg), 
+	del_attr(X,psub),
+	put_attr(X,psub,atv(TArg,_,_)),
+	%writeln('X'(X)), writeln('YArg'(YArg)),
+	subtype_unify1(X,YArg).
+
+%Do we need this?
+subtype_unify1(X,Y) :-
+	nonvar(X), \+ is_attv(X), \+is_list(X),
+	nonvar(Y), \+ is_attv(Y), \+is_list(Y),
+	X =.. [Name|XArgs],
+	Y =.. [Name|YArgs],
+	%writeln(XArgs), writeln(YArgs),
+	subtype_unify1(XArgs,YArgs).
+
+% We might also need this
+subtype_unify1(X,Y) :- 
+	is_attv(X), is_attv(Y),
+	get_attr(X,psub,atv(T,_,_)), nonvar(T),
+	get_attr(Y,psub,atv(S,_,_)), nonvar(S),
+	T = S,
+	install_verify_attribute_handler(psub,AttrVal,Target,sunif_handlerFOO(AttrVal,Target)),	
+	X = Y.
+sunif_handlerFOO(AttrVal,Target) :-
+	get_attr(Target,psub,AttrVal).
+
+subtype_unify1(X,Y) :- 
+	X == Y.
+subtype_unify1(X,Y) :-
+        is_list(X), %is_list(Y),
+        length(X,N),
+        length(Y,N),
+        maplist(subtype_unify1,X,Y).
+
+get_base_type(X,X) :-
+	ground(X), !.
+get_base_type(X:_,X).
+get_base_type(X:^_,X).
+get_base_type(Term,Type) :- nonvar(Term),
+	Term =.. [Name|Args], \+ (Name = ':' ; Name = ':^'),
+	maplist(get_base_type,Args,AArgs),
+	Type =.. [Name|AArgs].
+
+% Ground version of a quantified type
+ground(Type,GType) :-
+        copy_term(Type,GType1),
+        ground_attr_vars(GType1),
+        GType1 = GType.
+ground(Type,GType) :-
+	ground(Type), GType = Type.
+
+max_ground(Type,GType) :-
+	copy_term(Type,GType1), 
+	max_ground_attr_vars(GType1),
+	GType1 = GType.
+max_ground(Type,GType) :-
+	ground(Type), GType = Type.
+
+ground_attr_vars([]).
+ground_attr_vars([Term|Vars]) :-
+	( is_attv(Term)
+	-> ground_attr_vars1(Term)
+	; nonvar(Term), Term =.. [Name|Args],
+	maplist(ground_attr_vars1,Args)
+	),
+	ground_attr_vars(Vars).
+ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(T,_,_)), nonvar(T),
+        del_attr(X,psub),
+        X = T.
+ground_attr_vars1(X) :-
+        ground(X).
+
+max_ground_attr_vars([]).
+max_ground_attr_vars([Term|Vars]) :-
+	( nonvar(Term), Term =.. [Name|Args]
+	-> maplist(max_ground_attr_vars1,Args)
+	; max_ground_attr_vars1(Term)
+	),
+	max_ground_attr_vars(Vars).
+max_ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(_,T,_)), nonvar(T), !,
+        del_attr(X,psub),
+        X = T.
+max_ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(_,_,T)), nonvar(T), !,
+        del_attr(X,psub).
+max_ground_attr_vars1(X) :-
+	(ground(X) ; var(X)).
+
+% Attributed version of a Base Type
+% Universal types: [X:T,Y:S,...]
+% Existential types: [X:^T,Y:^S,...]
+at(Type,AT) :-
+        type_to_list(Type,AT).
+
+type_to_list(X,X) :- ground(X).
+type_to_list(X:Type,X) :- var(X),
+	put_attr(X,psub,atv(_,Type,_)).
+type_to_list(X:^Type,X) :- var(X),
+	put_attr(X,psub,atv(_,_,Type)).
+type_to_list(Term,Type) :- nonvar(Term),
+	Term =.. [Name|Args], \+ (Name = ':' ; Name = ':^'),
+	maplist(type_to_list,Args,AArgs),
+	Type =.. [Name|AArgs].
+
+% type_from_env/3
+% Let's be a bit careful with this, so that we won't have to
+% numbervars each term before type-checking
+type_from_env([Term:T|_],X,T) :-
+        nonvar(Term),
+        Term = Pred/Arity,
+        X == Pred/Arity.
+% The first time we reach for the type of a program variable, just put
+% the type as the attribute
+type_from_env([X:T|_],Y,X) :-
+        X == Y, \+ is_attv(X), !,
+        put_attr(X,psub,atv(T,_,_)).
+% If we reach for the type of a program variable again, it's already
+% attributed in the environment with the appropriate type
+type_from_env([X:_|_],Y,X) :- 
+        X == Y, is_attv(X), !.
+type_from_env([_|G],X,T) :-
+        type_from_env(G,X,T).
+
+% typeof/2
+% For program variables, predicates and function symbols, retrieve the
+% type from the environment using type_from_env/3. For ground terms,
+% "infer" it
+typeof(G,X:T) :- var(X),
+        install_verify_attribute_handler(psub,AttrVal,Target,env_handler(AttrVal,Target)),
+        type_from_env(G,X,T).
+typeof(_G,X:T) :- nonvar(X),
+        type_def(X,T).
+
+typeof(G,Term:T) :- nonvar(Term),
+	functor(Term,Name,_Arity),
+	type_decl(Term,FuncType),
+	FuncType = ftype(A,R),
+	copy_term(A,A1),
+	Term =.. [Name|Args],
+	maplist(typeof,G,Args,TArgs), 
+	get_base_type(A,Za), 
+	get_base_type(R,Zr),
+	at(A1,Za1), 
+	subtype_unify(TArgs,Za),
+	%writeln('Za'(Za)),
+	%writeln('Za1'(Za1)),
+	subtype_unify(Za,Za1),
+	%writeln('Zr'(Zr)),
+	T = Zr.
+
+type_def(X,T) :-
+        integer(X), !, T = integer.
+type_def(X,T) :-
+        float(X), !, T = float.
+type_def(X,T) :-
+        atom(X), X \== [], !, T = atom.
+
+env_handler(AttrVal,Target) :-
+        get_attr(Target,psub,atv(AttrVal,_,_)).
+
+print_list([]).
+print_list([X|Xs]) :-
+        writeln(X),
+        print_list(Xs).
+
+test2 :- assert(typed_pred(p/1,[list(T:any)])),
+	assert(type_decl([_|_],ftype([T:any,list(T:any)],list(T:any)))),
+	typeof([X:integer,Y:list(float)],([X|Y]:Type)),
+	writeln(Type).
+test1 :- assert(typed_pred(p/1,[list(T:number)])),
+	assert(type_decl([_|_],ftype([T:number,list(T:number)],list(T:number)))),
+	typeof_body([X:integer,Y:list(integer)],(p([X|Y]):Type)),
+	writeln(Type).
+test0 :- assert(typed_pred(p/2,[T:any,T:any])),
+        typeof_body([X:integer],(p(X,42):Type)),
+        writeln(Type).
+
+test :- assert(typed_pred(p/2,[T:number,T:number])), 
+        typeof_body([X:float,Y:float],p(X,Y):Type),
+        %typeof([X:integer,Y:integer],p(X,Y)`[integer]:Type),
+        writeln(Type).
+
+% And now, for the real type-checking
+% First case, existentially typed predicates and universally typed
+% predicates in the bodies of program clauses
+typeof_body(G,(Pred:Type)) :- 
+        functor(Pred,Name,Arity),
+        typed_pred(Name/Arity,SType), 
+        %( Stype = exists(_,_) ; Stype = forall(_,_) ),
+        Pred =.. [Name|Args],
+        maplist(typeof,G,Args,TArgs),
+        copy_term(SType,CSType),
+        copy_term(SType,CSType1),
+	%writeln(''(SType,Zeta)),
+        get_base_type(SType,Zeta), 
+        subtype_unify(TArgs,Zeta),
+        at(CSType1,Zeta1), 
+        subtype_unify(Zeta,Zeta1),
+	writeln(Zeta1),
+        ground(Zeta1,Type).
+
+% Second case, universally typed predicates in the heads of program clauses. 
+typeof_head(G,(Pred:Type)) :- %trace,
+        functor(Pred,Name,Arity),
+        typed_pred(Name/Arity,SType), 
+        %( Stype = exists(_,_) ; Stype = forall(_,_) ),
+        Pred =.. [Name|Args],
+        maplist(typeof,G,Args,TArgs),
+        copy_term(SType,CSType),
+        copy_term(SType,CSType1),
+        get_base_type(CSType,Zeta),
+        subtype_unify(TArgs,Zeta),
+        at(CSType1,Zeta1),
+        subtype_unify(Zeta,Zeta1), 
+        ground(Zeta1,Type),
+	at(SType,Zeta2),
+	%writeln('ST'(SType)),
+	%writeln('Z2'(Zeta2)),
+	max_ground(Zeta2,Type).
+                         
+
+% well_typed/3
+well_typed_rule(G,(Head :- Body)) :- 
+        well_typed_head(G,Head),
+        well_typed(G,Body).
+
+well_typed(_,true) :- !.
+well_typed(_,fail) :- !.
+well_typed(G,(G1,G2)) :- !,
+        well_typed(G,G1),
+        well_typed(G,G2).
+well_typed(G,Goal) :-
+        well_typed_single_goal(G,Goal).
+
+well_typed_single_goal(G,Goal) :- 
+        typeof_body(G,Goal:_T).
+
+well_typed_head(G,Head) :-
+	%writeln(env(G)),
+	%writeln(rule(Head)),
+        typeof_head(G,Head:_T).
+
+% Program transformation
+
+:- dynamic term_expansion/2, typed_pred/2, type_decl/2, e/1.
+
+term_expansion((:- pred Type),_) :-
+        conset('_$$numrule',0),
+        Type = Name/Arity:Types,
+        assert(typed_pred(Name/Arity,Types)).
+term_expansion((:- type Type),_) :-
+        Type = Name:TypeDecl,
+        writeln(type_decl(Name,TypeDecl)),
+        assert(type_decl(Name,TypeDecl)).
+term_expansion(Term,Term) :-
+        Term = (test :- _), !.
+term_expansion((:- env Env),_) :-
+        assert(Env).
+term_expansion(Term,_Term) :-
+        ( Term = (Head :- Body)
+        -> true
+        ; Head = Term, Head \== end_of_file,
+          Body = true
+        ),
+        coninc('_$$numrule'),
+        conget('_$$numrule',Num),
+        assert(numrule(Num,((Head :- Body)))),
+        assert(rule((Head :- Body))).
+term_expansion(end_of_file,_) :- 
+        findall(E,make_env(E),FEnv),
+        flatten(FEnv,Env),
+        findall(Rule,rule(Rule),Rules),
+	findall([X,Y],numrule(X,Y),NumRuleList),
+        ( type_check_program(NumRuleList,Rules,Env)
+        -> writeln('Program well-typed!')
+        ; writeln('Program ill-typed!')
+        ).
+
+make_env(Env) :-
+        numrule(Num,Rule),
+        e(EnvList),
+        member(r(Num,REnv),EnvList),
+        excess_vars(Rule,[],[],Vars),
+        create_env(Vars,REnv,Env).
+        
+create_env([],[],[]).
+create_env([X|Vars],[T|Types],[X:T|Env]) :-
+        create_env(Vars,Types,Env).
+
+type_check_program(_,[],_).
+type_check_program(List,[Rule|Rules],_) :-
+        %numbervars(Env,0,_),
+        %numbervars(Rule,0,_),
+	%numrule(Num,(Rule)),
+	member([Num,Rule],List),
+	e(EnvList),
+	member(r(Num,Env),EnvList),
+	excess_vars(Rule,[],[],Vars),
+	( Vars == []
+	-> Gamma = []
+	; create_env(Vars,Env,Gamma)
+	),
+        well_typed_rule(Gamma,Rule),
+        type_check_program(List,Rules,_).
+
+end_of_file.

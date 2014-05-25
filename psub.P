@@ -1,0 +1,1126 @@
+% Let's try xsbdoc
+:- comment(title, "An implementation of P<: for XSB-Prolog").
+:- comment(subtitle, "(in XSB-Prolog)").
+:- comment(author, "Spyros Hadjichristodoulou").
+:- comment(version, "1").
+:- comment(copyright, "Copyright @copyright{} 2014 Stony Brook University.").
+:- comment(summary, "@include{Summary.xsbdoc}").
+%:- comment(usage, "@include{Usage.xsbdoc}").
+
+:- comment(module,"@include{Psub.xsbdoc}").
+
+% Don't know how to document these yet
+:- import member/2, length/2, append/3, memberchk/2, select/3, flatten/2 from basics.
+:- import excess_vars/4 from setof.
+:- import unnumbervars/3 from num_vars.
+:- import conset/2, conget/2, coninc/1 from gensym.
+:- import put_attr/3, get_attr/3, del_attr/2,
+        install_verify_attribute_handler/4,
+        verify_attribute_handler/4, 
+        install_attribute_portray_hook/3 from machine.
+:- install_attribute_portray_hook(psub,Attribute,write(Attribute)).
+
+%:- table well_typed/2, type_from_env/3. %, typeof/2.
+
+:- comment('<:/2',"Subtype relation symbol").
+:- comment('^/1',"Existentially quantified type variables symbol").
+:- comment('->/2',"Function symbols' return type").
+
+:- op(1150, fx, type).
+:- op(1150, fx, pred).
+:- op(1150, fx, env).
+:- op(1150, fx, res).
+:- op(500,xfx,<:).
+:- op(500,fx,^).
+
+% Subtype Checker
+:- document_export is_subtype/3.
+:- comment(doinclude,is_subtype/3).
+:- comment(is_subtype/3, "Implements the subtype
+	  checker. The subtype checking algorithm of @tt{P<:} is an
+	  adaptation of the one lying in the heart of @tt{F<:}, the
+	  polymorphic lambda calculus. The first argument is a typing
+	  environment, and the remaining two are types,
+	   i.e. @tt{is_subtype([X<:Y],X,Y)} is true. Notice that this
+	  is the @em{only} tabled predicate in @apl{psub}; when we get
+	  to play with attributed variables, sadly tabling breaks
+	  everything").  
+:- table is_subtype/3.
+
+is_subtype(G,X,Y) :-
+	is_attv(X), is_attv(Y), !,
+	get_attr(X,psub,atv(_,S,_,_)), nonvar(S),
+	get_attr(Y,psub,atv(_,T,_,_)), nonvar(T),
+	is_subtype(G,T,S).
+
+is_subtype(_,X,Y) :-
+	var(X), var(Y), !, X == Y.
+
+is_subtype(G,S,T) :-
+        nonvar(S), nonvar(T),
+        is_subtype_def(G,S,T).
+
+:- document_export find_in_env/3.
+:- comment(doinclude,find_in_env/3).
+:- comment(find_in_env/3, "Finds the type of a type variable in the
+	  given environment. The first argument is the environment,
+	   the second is the type variable and the third is the
+	  returned type."). 
+
+find_in_env([V <: T|Env], V1, T1) :-
+        ( V == V1
+        -> T1 = T
+        ; find_in_env(Env,V1,T1)
+        ).
+% T = any -> T == any
+is_subtype(_,_,T) :- T == any.
+
+is_subtype(G,X,T) :- 
+        var(X),
+        find_in_env(G,X,U),
+        is_subtype(G,U,T).
+% "Kernel P<:"
+/*
+is_subtype(G,S,T) :- nonvar(S), nonvar(T),
+        S = forall(X <: U,S2),
+        T = forall(X <: U,T2),
+        append(G,[X <: U], G1),
+        is_subtype(G1,S2,T2).
+*/
+% "Full P<:"
+is_subtype(G,_:S,_:T) :- 
+        is_subtype(G,T,S).
+
+is_subtype(G,S,T) :- nonvar(S), nonvar(T),
+        S = arrow(S1,S2),
+        T = arrow(T1,T2),
+        is_subtype(G,T1,S1),
+        is_subtype(G,T2,S2).
+
+is_subtype(G,T,R) :-
+       \+ is_list(T), \+ is_list(R),
+       \+ functor(T,:,2), \+ functor(R,:,2),
+        (structure(T)
+	 ->	T =.. [Name|TArgs],
+		length(TArgs,N),
+		length(RArgs,N),
+		R =.. [Name|RArgs]
+	 ; structure(R)
+	 ->	R =.. [Name|RArgs],
+		length(RArgs,N),
+		length(TArgs,N),
+		T =.. [Name|TArgs]
+	 ;	fail
+        ),
+        is_subtype_list(G,TArgs,RArgs).
+
+is_subtype(G,T,R) :-
+        is_list(T), is_list(R),
+        is_subtype_list(G,T,R).
+
+is_subtype_list(_,[],[]).
+is_subtype_list(G,[T|Ts],[R|Rs]) :- 
+        is_subtype(G,T,R),
+        append(G,[T <: R],G1),
+        is_subtype1_list(G1,Ts,Rs).
+
+is_subtype1_list(G,X,Y) :-
+        same_length(X,Y), 
+        is_subtype_list(G,X,Y).
+
+same_length([],[]).
+same_length([_|L],[_|M]) :- same_length(L,M).
+
+:- document_export is_subtype_def/3.
+:- comment(doinclude,is_subtype_def/3).
+:- comment(is_subtype_def/3, "Subtype relation between primitive
+	  types. Notice that these facts are true for @em{any} typing
+	  environment, hence the first argument here is always an
+	  unnamed variable."). 
+
+is_subtype_def(_,integer,integer).
+is_subtype_def(_,integer,number).
+is_subtype_def(_,integer,atomic).
+is_subtype_def(_,float,float).
+is_subtype_def(_,float,number).
+is_subtype_def(_,float,atomic).
+is_subtype_def(_,atom,atom).
+is_subtype_def(_,atom,atomic).
+is_subtype_def(_,number,number).
+is_subtype_def(_,number,atomic).
+is_subtype_def(_,atomic,atomic).
+
+%:- document_export maplist/2.
+%:- comment(doinclude,maplist/2).
+%:- comment(maplist/2, "@pred{maplist/2} and friends (3-ary and 4-ary)"). 
+
+maplist(_,_,[],[]).
+maplist(Pred,Env,[In|Ins],[Out|Outs]) :-
+        call(Pred,Env,(In:Out)),
+        maplist(Pred,Env,Ins,Outs).
+
+maplist(_,[],[]).
+maplist(Pred,[X|Xs],[Y|Ys]) :-
+        call(Pred,X,Y),
+        maplist(Pred,Xs,Ys).
+
+maplist(_,[]).
+maplist(Pred,[Arg|Args]) :-
+	call(Pred,Arg),
+	maplist(Pred,Args).
+
+% Custom unification routine
+% Using attributed variables to model Attributed Type Variables
+% The attribute is an atv(EQ,U,E,M), where:
+% EQ = eq-atv attribute
+% U  = u-atv attribute
+% E  = e-atv attribute
+% M = m-atv attribute
+% At most one of these can be set at any given point in time
+
+:- document_export subtype_unify/2.
+:- comment(doinclude,subtype_unify/2).
+:- comment(subtype_unify/2, "Here is where the fun
+	  begins. @pred{subtype_unif/2} is the custom unification
+	  routine implementing replacements and subtype unification in
+	  @tt{P<:}. Each attributed variable gets an @pred{atv/4}
+	  term, which is structured as follows (notice that in each
+	  case, at most @bf{one} argument is bound to a type):
+	  @begin{itemize}
+	  @item @tt{atv(T,_,_,_)}: @tt{T} is a primitive type and all
+	  other arguments are unnamed variables. Represents the type
+	  of a program variable in the @em{typing environment}
+	  @item @tt{atv(_,T,_,_)}: @tt{T} is a primitive type and all
+	  other arguments are unnamed variables. Represents the type
+	  of a @em{universally} quantified type variable in the type
+	  signature of a predicate
+	  @item @tt{atv(_,_,T,_)}: @tt{T} is a primitive type and all
+	  other arguments are unnamed variables. Represents the type
+	  of an @em{existentially} quantified type variable in the type
+	  signature of a predicate
+	  @item @tt{atv(_,_,_,T)}: @tt{T} is a primitive type and all
+	  other arguments are unnamed variables. Represents the type
+	  of a @em{mutable} type variable (whose type might change
+	  later on)
+	  @end{itemize}
+	  To be precise, @pred{subtype_unify/2} simply calls
+	  @pred{subtype_unify1/2} with the exact same arguments, so
+	  all the work is being done in the later. However, using both
+	  predicates helps in debugging. Look at the comments for more
+	  information on what each definition is.
+	  ").
+
+subtype_unify(X,Y) :- 
+        subtype_unify1(X,Y).
+
+% a(Y) = null, X is attv
+subtype_unify1(X,Y) :-
+        is_attv(X), var(Y), \+ is_attv(Y),
+        X = Y.
+% a(Y) = null, X is ground
+subtype_unify1(X,Y) :-
+	ground(X), var(Y), \+ is_attv(Y),
+	X = Y.
+% X is ground, a(Y) = (G,T)
+subtype_unify1(X,Y) :- 
+	ground(X), is_attv(Y),
+	get_attr(Y,psub,atv(T,_,_,_)), nonvar(T),
+	del_attr(Y,psub),
+	X = T, X = Y.
+% a(X) = (G,T), Y is ground
+subtype_unify1(X,Y) :-
+	is_attv(X), ground(Y),
+	get_attr(X,psub,atv(T,_,_,_)), nonvar(T),
+	del_attr(X,psub),
+	Y = T, X = Y.
+% X is ground, Y is ground
+subtype_unify1(X,Y) :-
+	ground(X), ground(Y),
+	X = Y.
+% X is ground, a(Y) = (U,S)
+subtype_unify1(X,Y) :-
+	ground(X), is_attv(Y),
+	get_attr(Y,psub,atv(_,S,_,_)), nonvar(S),
+	del_attr(Y,psub),
+	is_subtype([],X,S),
+	X = Y.
+% X is ground, a(Y) = (E,S)
+subtype_unify1(X,Y) :- 
+	ground(X), is_attv(Y), 
+	get_attr(Y,psub,atv(_,_,S,_)), nonvar(S),
+	del_attr(Y,psub),
+	is_subtype([],X,S),
+	X = Y.
+% X is ground, a(Y) = (M,S)
+subtype_unify1(X,Y) :-
+	ground(X), is_attv(Y),
+	get_attr(Y,psub,atv(_,_,_,S)), nonvar(S),
+	del_attr(Y,psub),
+	is_subtype([],X,S),
+	X = Y.
+% a(X) = (A,T), a(Y) = (A,S)
+subtype_unify1(X,Y) :-
+	is_attv(X), is_attv(Y),
+	get_attr(X,psub,XAttr),
+	get_attr(Y,psub,YAttr),
+	get_annotation(XAttr,_,_,0), get_annotation(YAttr,_,_,0), 
+	X = Y.
+% The next ones are for function symbols
+% a(X) = (A,f(S)), a(Y) = (B,f(T))
+subtype_unify1(X,Y) :-
+	is_attv(X), is_attv(Y),
+	get_attr(X,psub,XAttr),
+	get_attr(Y,psub,YAttr),
+	get_annotation(XAttr,AX,Functor,Arity),
+	get_annotation(YAttr,AY,Functor,Arity),
+	Arity > 0,
+	del_attr(X,psub), del_attr(Y,psub),
+	put_attr(X,psub,AX), put_attr(Y,psub,AY),
+	subtype_unify1(X,Y).
+% a(X) = (A,f(T)), Y = f(S)
+subtype_unify1(X,Y) :- 
+	is_attv(X), nonvar(Y),
+	get_attr(X,psub,XAttr),
+	get_annotation(XAttr,AX,Functor,Arity),
+	functor(Y,Functor,Arity),
+	del_attr(X,psub),
+	put_attr(X,psub,AX),
+	arg(1,Y,YArg),
+	subtype_unify1(X,YArg).
+% a(X) = null, T = f(S)
+subtype_unify1(X,Y) :-
+	is_attv(X), nonvar(Y),
+	get_attr(X,psub,atv(null)),
+	X = Y.
+% X is ground, a(Y) = null
+subtype_unify1(X,Y) :-
+	nonvar(X), is_attv(Y),
+	get_attr(Y,psub,atv(null)),
+	X = Y.
+% X = f(W), Y = f(Z)
+subtype_unify1(X,Y) :- %trace,
+        nonvar(X), nonvar(Y),
+        functor(X,Name,Arity),
+        functor(Y,Name,Arity),
+        is_subtype([],X,Y).
+% X == Y
+subtype_unify1(X,Y) :- 
+	X == Y.
+% Tuple-type sunif
+subtype_unify1(X,Y) :-
+        is_list(X), %is_list(Y),
+        length(X,N),
+        length(Y,N),
+        maplist(subtype_unify1,X,Y).
+% X = f(T), T = f(S)
+subtype_unify1(X,Y) :-
+	\+ is_attv(X), \+ is_attv(Y), nonvar(X), nonvar(Y),
+	\+ is_list(X), \+is_list(Y),
+	X =.. [Name|XArgs],
+	Y =.. [Name|YArgs],
+	subtype_unify1(XArgs,YArgs).
+
+:- document_export sunif_handler/2.
+:- comment(doinclude,sunif_handler/2).
+:- comment(sunif_handler/2, "Handler for unifying attributed
+	variables. We have only one handler with multiple
+	  nondeterministic definitions, so that we don't assert and
+	  retract a different handler and make things horribly
+	  inefficient. Look in the individual comments for information
+	  about what each definition is.").
+
+% a(X) = (G,T), a(Y) = (G,T)
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(Attr,_,_,_)), nonvar(Attr),
+	AttrVal = atv(X,_,_,_), nonvar(X), 
+	X = Attr.
+% a(X) = (G,T), a(Y) = (E,T)
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(Attr,_,_,_)), nonvar(Attr),
+	AttrVal = atv(_,_,X,_), nonvar(X), 
+	X = Attr.
+% a(X) = (G,T), a(Y) = (U,S)
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(S,_,_,_)), nonvar(S),
+	AttrVal = atv(_,T,_,_), nonvar(T),
+	is_subtype([],S,T),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(S,_,_,_)).
+% Let's see if inferring the environment works
+% a(X) = null, a(T) = (G,T)
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(null)),
+	AttrVal = atv(T,_,_,_), nonvar(T),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(T,_,_,_)).
+% a(X) = null, a(Y) = (E,T) and star
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(null)),
+	AttrVal = atv(_,_,T,_), nonvar(T),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(T,_,_,_)).
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(_,_,T,_)), nonvar(T),
+	AttrVal = atv(null),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(T,_,_,_)).
+% a(X) = null, a(T) = (U,T) and star
+sunif_handler(AttrVal,Target) :- 
+	get_attr(Target,psub,atv(null)),
+	AttrVal = atv(_,T,_,_), nonvar(T),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(_,_,_,T)).
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(_,T,_,_)), nonvar(T),
+	AttrVal = atv(null),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(_,_,_,T)).
+% a(X) = (U,S), a(Y) = (M,T), T <: S
+sunif_handler(AttrVal,Target) :- 
+	get_attr(Target,psub,atv(_,_,_,T)), nonvar(T), 
+	AttrVal = atv(_,S,_,_), nonvar(S), 
+	del_attr(Target,psub),
+	is_subtype([],T,S),
+	put_attr(Target,psub,atv(_,_,_,T)).
+% a(X) = (U,S), a(Y) = (M,T), S <: T
+sunif_handler(AttrVal,Target) :- 
+	get_attr(Target,psub,atv(_,_,_,T)), nonvar(T),
+	AttrVal = atv(_,S,_,_), nonvar(S),
+	del_attr(Target,psub),
+	is_subtype([],S,T),
+	put_attr(Target,psub,atv(_,_,_,S)).
+% a(X) = null, a(Y) = (M,T) and star
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(null)), 
+	AttrVal = atv(_,_,_,T), nonvar(T),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(_,_,_,T)).
+sunif_handler(AttrVal,Target) :-
+	get_attr(Target,psub,atv(_,_,_,T)), nonvar(T),
+	AttrVal = atv(null),
+	del_attr(Target,psub),
+	put_attr(Target,psub,atv(_,_,_,T)).
+sunif_handler(AttrVal,_Target) :-
+	AttrVal = atv(null).
+sunif_handler(AttrVal,Target) :- 
+        get_attr(Target,psub,Attr),
+        same_attr(Attr,AttrVal).
+
+same_attr(atv(T1,T2,T3,T4),atv(S1,S2,S3,S4)) :-
+        T1 == S1 ; T2 == S2 ; T3 == S3 ; T4 == S4.
+
+:- document_export get_annotation/4.
+:- comment(doinclude,get_annotation/4).
+:- comment(get_annotation/4, "Returns the annotation of a given type
+	  variable (represented as an attributed Prolog variable). The
+	  first argument is the given variable, the second is the
+	  annotation, the third is the functor name of the annotation,
+	   and the fourth its arity.").
+
+get_annotation(atv(null),atv(null),_,0).
+get_annotation(atv(X,_,_,_),Ann,Functor,Arity) :- 
+	nonvar(X), functor(X,Functor,Arity),
+	( Arity > 0
+	-> arg(1,X,XArg),
+	Ann = atv(XArg,_,_,_)
+	; true
+	).
+get_annotation(atv(_,X,_,_),Ann,Functor,Arity) :-
+	nonvar(X), functor(X,Functor,Arity),
+	( Arity > 0
+	-> arg(1,X,XArg),
+	Ann = atv(_,XArg,_,_)
+	; true
+	).
+get_annotation(atv(_,_,X,_),Ann,Functor,Arity) :-
+	nonvar(X), functor(X,Functor,Arity),
+	( Arity > 0
+	-> arg(1,X,XArg),
+	Ann = atv(_,_,XArg,_)
+	; true
+	).
+get_annotation(atv(_,_,_,X),Ann,Functor,Arity) :-
+	nonvar(X), functor(X,Functor,Arity),
+	( Arity > 0
+	-> arg(1,X,XArg),
+	Ann = atv(_,_,_,XArg)
+	; true
+	).
+
+:- document_export get_base_type/2.
+:- comment(doinclude,get_base_type/2).
+:- comment(get_base_type/2, "Implements the @em{bt()} function,
+	  returning the @em{base type} of a quantified type. The base
+	  type is basically a @em{pattern} of the type variables
+	  appearing in the type. We handle existential variables the
+	  same way they are handled in the @apl{setof} module,
+	   i.e. test, cut, unify.").
+
+get_base_type(X,X) :-
+	ground(X), !.
+get_base_type(X:_,Y) :- var(X), !, X = Y.
+				% :- put_attr(X,psub,atv(null)).
+get_base_type(^X:_,Y) :- !, get_base_type(X:_,Y).
+				% :- put_attr(X,psub,atv(null)).
+get_base_type(Term,Type) :- nonvar(Term),
+	Term =.. [Name|Args], \+ (Name = ':' ; Name = ':^'),
+	maplist(get_base_type,Args,AArgs),
+	Type =.. [Name|AArgs].
+
+:- document_export ground/2.
+:- comment(doinclude,ground/2).
+:- comment(ground/2, "Implements the @em{g()} function,
+	  grounding each type variable using its annotation. Its
+	  friend, @pred{max_ground/2}, @em{maximally} grounds a type,
+	   by only grounding the universally quantified type
+	  variables, thus implementing the @em{mg()} function").
+
+:- document_export max_ground/2.
+:- comment(doinclude,max_ground/2).
+:- comment(max_ground/2, "Implements the @em{mg()} function,
+	  @em{maximally} grounding a type,
+	   by only grounding the universally quantified type
+	  variables. Used only when type checking clause heads.").
+
+ground(Type,GType) :-
+        copy_term(Type,GType1),
+        ground_attr_vars(GType1),
+        GType1 = GType.
+ground(Type,GType) :-
+	ground(Type), GType = Type.
+
+max_ground(Type,GType) :-
+	copy_term(Type,GType1), 
+	max_ground_attr_vars(GType1),
+	GType1 = GType.
+max_ground(Type,GType) :-
+	ground(Type), GType = Type.
+
+ground_attr_vars([]).
+ground_attr_vars([Term|Vars]) :-
+	( is_attv(Term)
+	-> ground_attr_vars1(Term)
+	; nonvar(Term), Term =.. [_Name|Args],
+	maplist(ground_attr_vars1,Args)
+	),
+	ground_attr_vars(Vars).
+
+ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(T,_,_,_)), nonvar(T),
+        del_attr(X,psub),
+        X = T.
+ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(_,T,_,_)), nonvar(T),
+        del_attr(X,psub),
+        X = T.
+ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(_,_,T,_)), nonvar(T),
+        del_attr(X,psub),
+        X = T.
+ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(_,_,_,T)), nonvar(T),
+        del_attr(X,psub),
+        X = T.
+ground_attr_vars1(X) :-
+        ground(X).
+
+max_ground_attr_vars([]).
+max_ground_attr_vars([Term|Vars]) :-
+	( nonvar(Term), Term =.. [_Name|Args]
+	-> maplist(max_ground_attr_vars1,Args)
+	; max_ground_attr_vars1(Term)
+	),
+	max_ground_attr_vars(Vars).
+max_ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(_,T,_,_)), nonvar(T), !,
+        del_attr(X,psub),
+        X = T.
+max_ground_attr_vars1(X) :-
+        is_attv(X),
+	get_attr(X,psub,atv(_,_,T,_)), nonvar(T), !,
+        del_attr(X,psub).
+max_ground_attr_vars1(X) :-
+	(ground(X) ; var(X)).
+
+:- document_export at/2.
+:- comment(doinclude,at/2).
+:- comment(at/2, "Implements the @em{at()} function, which returns the
+	  @em{annotated} version of a quantified type. The first
+	  argument is the quantified type, i.e. usually a type
+	  signature, and the second is its annotated counterpart,
+	  i.e. the same type, but with each type variable replaced
+	  with an appropriate annotated one.").
+
+at(Type,AT) :- 
+        type_to_list(Type,AT).
+
+type_to_list(X,X) :- ground(X).
+type_to_list(X:Type,Y) :- var(X), !,
+	put_attr(Y,psub,atv(_,Type,_,_)), Y = X.
+type_to_list(^X:Type,X) :- !,
+	put_attr(X,psub,atv(_,_,Type,_)).
+type_to_list(Term,Type) :- nonvar(Term),
+	Term =.. [Name|Args], \+ (Name = ':' ; Name = ':^'),
+	maplist(type_to_list,Args,AArgs),
+	Type =.. [Name|AArgs].
+
+:- document_export type_from_env/3.
+:- comment(doinclude,type_from_env/3).
+:- comment(type_from_env/3, "Similar to @pred{find_in_env/3}, but a
+          bit more general to handle attributed variables (i.e. type
+          variables with annotations). It defines the following cases:
+          @begin{itemize}
+          @item When we want the type signature of a predicate from
+          the environment
+          @item The first time we get the type of a program variable,
+           we need to appropriately add the (G,T) annotation by adding
+          an atv(T,_,_,_) attribute on the variable
+          @item Any time we need the type of a program variable after
+          the first occurrence, it is already annotated, so we simply
+          return it in the third argument
+          @end{itemize}
+          ").
+
+type_from_env([Term:T|_],X,T) :-
+        nonvar(Term),
+        Term = Pred/Arity,
+        X == Pred/Arity.
+type_from_env([X:T|_],Y,X) :-
+        X == Y, \+ is_attv(X), !,
+        put_attr(X,psub,atv(T,_,_,_)).
+type_from_env([X:_|_],Y,X) :- 
+        X == Y, is_attv(X), !.
+type_from_env([_|G],X,T) :-
+        type_from_env(G,X,T).
+
+:- document_export typeof/2.
+:- comment(doinclude,typeof/2).
+:- comment(typeof/2, "Finds the types of program terms:
+          @begin{itemize}
+          @item For program variables, we simply call
+          @pred{type_from_env/3}
+          @item For ground terms, we use the 'inference' algorithm
+          implemented with @pred{type_def/2} to find the least type
+          @item Two cases for function symbols:
+          @begin{itemize}
+          @item For 0-ary function symbols, we simply return the full
+          quantified return type of the type declaration
+          @item For all other function symbols, we use the types of
+          its arguments, subtype unify with the type declaration, and
+          return the return type 
+          @end{itemize}
+          @item And a final special case; because we use the program
+          variable itself as a type variable appropriately annotated
+          to represent its type, sometimes they get bound to more
+          complex types, like list(T), so if we encounter one, simply
+          return it
+          @end{itemize}
+          ").
+
+typeof(G,X:T) :- var(X),
+        type_from_env(G,X,T).
+typeof(_G,X:T) :- nonvar(X),
+        type_def(X,T).
+
+typeof(G,Term:T) :- nonvar(Term),
+	functor(Term,Name,Arity), Arity > 0,
+	'_$$type_type_decl'(Term,FuncType),
+	FuncType = ftype(A,R),
+	copy_term(A,A1),
+	Term =.. [Name|Args],
+	maplist(typeof,G,Args,TArgs),
+	get_base_type(A,Za), 
+	get_base_type(R,Zr),
+	at(A1,Za1),
+	subtype_unify(TArgs,Za),
+	subtype_unify(Za,Za1),
+	T = Zr.
+% for 0-ary function symbols
+typeof(_G,Term:T) :- nonvar(Term),
+        functor(Term,_Name,0),
+        '_$$type_type_decl'(Term,FuncType),
+        FuncType = ftype(_A,Zr),
+        at(Zr,T).
+        
+typeof(G,Term:T) :- nonvar(Term),
+	member(Term:T,G).
+
+:- document_export type_def/2.
+:- comment(doinclude,type_def/2).
+:- comment(type_def/2, "Implements the 'inference' algorithm that
+          finds the least possible type of a ground term.
+          ").
+
+type_def(X,T) :-
+        integer(X), !, T = integer.
+type_def(X,T) :-
+        float(X), !, T = float.
+type_def(X,T) :-
+        atom(X), X \== [], !, T = atom.
+
+env_handler(AttrVal,Target) :-
+        get_attr(Target,psub,atv(AttrVal,_,_,_)).
+
+print_list([]).
+print_list([X|Xs]) :-
+        writeln(X),
+        print_list(Xs).
+
+:- document_export typeof_body/2.
+:- comment(doinclude,typeof_body/2).
+:- comment(typeof_body/2, "Implements the ETBody rule used to
+          type check clause bodies. Notice that the 'maximal
+          grounding' test needs not be performed here, since
+          universally typed predicates are allowed to be typed in any
+          legitimate way. The procedure followed is simple enough:
+          @begin{itemize}
+          @item We get the type of the predicate's arguments from the
+          environment, using @pred{typeof/2}
+          @item We perform two subtype unifications, one between the
+          type of the predicate's arguments and the signature's base
+          type (which we find using @pred{bt/2}, and one between any
+          of these two types (after the substitutions have been
+          applied), and the signature's annotated type (which we find
+          using @pred{at/2})
+          @item We @em{ground} the type by substituting every variable
+          with its annotation/attribute
+          @end{itemize}
+          ").
+
+% And now, for the real type-checking
+:- dynamic '_$$type_env_finalize'/0.
+typeof_body(G,(Pred:Type)) :-   %trace,
+        functor(Pred,Name,Arity),
+        '_$$type_typed_pred'(Name/Arity,SType), 
+        Pred =.. [Name|Args],
+        maplist(typeof,G,Args,TArgs),
+        copy_term(SType,CSType1),
+        get_base_type(SType,Zeta),
+        (subtype_unify(TArgs,Zeta)
+	-> true
+	; write_type_error(Pred,SType,TArgs), fail
+	),
+        at(CSType1,Zeta1), 
+        ( subtype_unify(Zeta,Zeta1)
+	-> true
+	; write_type_error(Pred,SType,TArgs), fail
+	),
+        ground(Zeta1,Type).
+
+:- document_export typeof_head/2.
+:- comment(doinclude,typeof_head/2).
+:- comment(typeof_head/2, "Implements the ETHead rule used to
+          type check clause bodies. There are two differences between this
+          predicate and @pred{typeof_body/2}:
+          @begin{itemize}
+          @item First, the @em{maximal
+          grounding} test performed in the end, which ensures that all
+          universally typed arguments are @em{maximally} typed in the
+          heads of clauses.
+          @item Second, the @em{environment finalization} step, which
+          makes sure that the types so far 'inferred' for program
+          variables appearing in the place of universally
+          typed arguments will not be changed in the future
+          @end{itemize}
+          ").
+
+% Second case, universally typed predicates in the heads of program clauses. 
+typeof_head(G,(Pred:Type)) :- 
+        functor(Pred,Name,Arity),
+        '_$$type_typed_pred'(Name/Arity,SType), 
+        Pred =.. [Name|Args],
+        maplist(typeof,G,Args,TArgs),
+        copy_term(SType,CSType),
+        copy_term(SType,CSType1),
+        get_base_type(CSType,Zeta),
+        ( subtype_unify(TArgs,Zeta)
+	-> true
+	; write_type_error(Pred,SType,TArgs), fail
+	),
+        at(CSType1,Zeta1),
+        ( subtype_unify(Zeta,Zeta1)
+	-> true
+	; write_type_error(Pred,SType,TArgs), fail
+	),
+        assert('_$$type_env_finalize'),
+	env_finalize(G),
+        retractall('_$$type_env_finalize'),
+        ground(Zeta1,Type),
+	at(SType,Zeta2),
+	max_ground(Zeta2,Type).
+
+:- document_export env_finalize/1.
+:- comment(doinclude,env_finalize/1).
+:- comment(env_finalize/1, "Implements the @em{e()} function, by
+          changing the annotations of type variables used as
+          universally typed arguments from immutable to mutable, in
+          order to prevent their types to be changed 
+          while type checking in the remainder of the clause
+          ").
+
+env_finalize([]).
+env_finalize(G) :-
+	attv_member(_:T,G),
+        attv_excess_vars(T,Vars),
+        ( Vars == []
+        -> true
+        ; env_finalize1(Vars)
+        ).
+
+attv_member(X,[X|_]). % :-
+        %copy_term(X,Y).
+attv_member(X,[_|Y]) :-
+        attv_member(X,Y).
+sunif_handler(AttrVal,[]) :-
+        '_$$type_env_finalize',
+        AttrVal = atv(T1,T2,T3,T4),
+        (nonvar(T1) ; nonvar(T2) ; nonvar(T3) ; nonvar(T4)).
+sunif_handler(AttrVal,[]) :-
+        '_$$type_env_finalize',
+        AttrVal = atv(null).
+
+env_finalize1([]).
+env_finalize1([T|Ts]) :-
+        get_attr(T,psub,atv(_,_,_,S)),
+        ( nonvar(S)
+        -> del_attr(T,psub),
+          put_attr(T,psub,atv(S,_,_,_))
+        ; true
+        ),
+        env_finalize1(Ts).
+
+% excess_vars/4 doesn't copy around the attributes, so we need our own
+% custom one!
+
+attv_excess_vars(X,Y) :-
+        is_attv(X), !,
+        copy_term(X,Y).
+attv_excess_vars(X,Y) :-
+        nonvar(X), \+ is_list(X),
+        functor(X,_,Arity), Arity > 0,
+        X =.. [_|Args],
+        attv_excess_vars1(Args,Y).
+attv_excess_vars(X,Y) :-
+        is_list(X), attv_excess_vars1(X,Y).
+attv_excess_vars1([],[]).
+attv_excess_vars1([X|Xs],[Y|Ys]) :-
+        attv_excess_vars(X,Y),
+        attv_excess_vars1(Xs,Ys).
+
+
+:- document_export well_typed_rule/3.
+:- comment(doinclude,well_typed_rule/3).
+:- comment(well_typed_rule/3, "Implements the TClause1 rule.
+          The first argument is
+          a typing environment, and the second a term of the form
+          @tt{Head :- Body}, which is type checked by
+          @begin{itemize}
+          @item First type checking the head using
+          @pred{well_typed_head/2}
+          @item Then type checking the body using @pred{well_typed/2}
+          @end{itemize}
+          ").
+
+well_typed_rule(G,(Head :- Body)) :- 
+        well_typed_head(G,Head), !, 
+        well_typed(G,Body).
+
+:- document_export well_typed/3.
+:- comment(doinclude,well_typed/3).
+:- comment(well_typed/3, "Implements the TClause1, TClause2,
+          TClause3 and TProg rules for handling the different
+          structural cases of a Prolog program. The first argument is
+          a typing environment, and the second a different syntactic
+          form appearing in a Prolog clause:
+          @begin{itemize}
+          @item The atoms @apl{true} and @apl{fail} are @em{always}
+          well-typed
+          @item Conjunctions of the form @tt{(G1,G2)} are type checked
+          by first type checking @tt{G1} using the typing environment,
+           and then @tt{G2} by using the same typing environment,
+           after any changes have been applied to it
+          @item Single atoms are type checked by calling the
+          @pred{well_typed_single_goal/2} predicate
+          @end{itemize}
+          ").
+
+well_typed(_,true) :- !.
+well_typed(_,fail) :- !.
+well_typed(G,(G1,G2)) :- !,
+        well_typed(G,G1),
+        well_typed(G,G2).
+well_typed(G,Goal) :- 
+        well_typed_single_goal(G,Goal).
+
+:- document_export well_typed_single_goal/3.
+:- comment(doinclude,well_typed_single_goal/3).
+:- comment(well_typed_single_goal/3, "Used to type check a literal in
+          a clause body, using @pred{typeof_body/3}
+          ").
+
+well_typed_single_goal(G,Goal) :-
+        typeof_body(G,Goal:_T). %, writeln(T),writeln(G).
+
+:- document_export well_typed_head/3.
+:- comment(doinclude,well_typed_head/3).
+:- comment(well_typed_head/3, "Used to type check a clause head, 
+          using @pred{typeof_head/3}
+          ").
+
+well_typed_head(G,Head) :-
+        typeof_head(G,Head:_T). %, writeln(T).
+
+% Program transformation
+:- dynamic term_expansion/2, '_$$type_typed_pred'/2, '_$$type_type_decl'/2, e/1.
+
+:- document_export term_expansion/2.
+:- comment(doinclude,term_expansion/2).
+:- comment(term_expansion/2, "These are the program transformation
+          rules, and they are used to read the typing declarations and
+          assert appropriate facts:
+          @begin{itemize}
+          @item For @tt{:- pred } declarations, facts of the form
+          @tt{_$$type_typed_pred/2} are asserted
+          @item For @tt{:- type } declarations, facts of the form
+          @tt{_$$type_type_decl/2} are asserted
+          @item When the @apl{end_of_file} atom is reached, type
+          checking is performed on the program using
+          @pred{type_check_program/3}, and then the database is
+          'cleaned up' using @pred{_$$type_cleanup/0}.
+          @end{itemize}          
+          ").
+
+term_expansion((:- pred Type),_) :- 
+        conset('_$$type_numrule',0),
+	Type =.. [Name|Types], functor(Type,Name,Arity),
+        assert('_$$type_typed_pred'(Name/Arity,Types)).
+term_expansion((:- type ArgType -> RetType),_) :- 
+	ArgType =.. [ArgName|Args],
+	functor(ArgType,ArgName,Arity),
+	functor(Name,ArgName,Arity),
+	TypeDecl = ftype(Args,RetType),
+        assert('_$$type_type_decl'(Name,TypeDecl)).
+term_expansion(Term,Term) :-
+        Term = (test :- _), !.
+term_expansion((:- env Env),_) :-
+        assert(Env).
+term_expansion((:- res Res),_) :-
+        assert('_$$type_res'(Res)).
+term_expansion(Term,_Term) :-
+        ( Term = (Head :- Body)
+        -> true
+        ; Head = Term, Head \== end_of_file,
+          Body = true
+        ),
+        coninc('_$$type_numrule'),
+        conget('_$$type_numrule',Num),
+        assert('_$$type_numrule'(Num,((Head :- Body)))),
+        assert('_$$type_rule'((Head :- Body))).
+term_expansion(end_of_file,_) :- 
+        findall(E,make_env(E),FEnv),
+        flatten(FEnv,Env),
+        findall(Rule,'_$$type_rule'(Rule),Rules),
+	findall([X,Y],'_$$type_numrule'(X,Y),NumRuleList), 
+	install_verify_attribute_handler(psub,AttrVal,Target,sunif_handler(AttrVal,Target)),
+        ( type_check_program(NumRuleList,Rules,Env)
+	-> write_well_typed
+	; write_ill_typed
+        ),
+	'_$$type_cleanup'.
+
+:- document_export '_$$type_typed_pred'/2.
+:- comment(doinclude,'_$$type_typed_pred'/2).
+:- comment('_$$type_typed_pred'/2, "Used to represent type signature
+          information for each predicate. The first argument is a
+          term of the form @tt{Name/Arity}, and the second is a list
+          representing the tuple-type that the types of its arguments
+          comprise
+          ").
+
+:- document_export '_$$type_type_decl'/2.
+:- comment(doinclude,'_$$type_type_decl'/2).
+:- comment('_$$type_type_decl'/2, "Used to represent type declaration
+          information for each function symbol used. The first argument is
+          the function symbol's name, and the second a term of the
+          form @tt{ftype/2}, where the first argument is the argument
+          type, and the second is the return type
+          ").
+
+write_well_typed :-
+	write('Program well-typed!'),
+	('_$$type_res'(ok)
+	-> writeln('  Answer OK')
+	; writeln('  Answer WRONG')
+	).
+
+write_ill_typed :-
+	write('Program ill-typed!'),
+	('_$$type_res'(fail)
+	-> writeln('  Answer OK')
+	; writeln('  Answer WRONG')
+	).
+
+make_env(Env) :-
+        '_$$type_numrule'(_Num,Rule),
+        %e(EnvList),
+        %member(r(Num,REnv),EnvList),
+        excess_vars(Rule,[],[],Vars),
+        create_env(Vars,Env).
+
+:- document_export create_env/2.
+:- comment(doinclude,create_env/2).
+:- comment(create_env/2, "Creates a new typing environment by setting
+          the annotation of each type variable to @em{null}. Since
+          each program variable's type is represented by itself, we
+          only need to add an @tt{atv(null)} to each program variable
+          appearing in a clause to get the typing environment.
+          ").
+
+create_env([],[]).
+create_env([X|Vars],[X:X|Env]) :-
+	put_attr(X,psub,atv(null)),
+	create_env(Vars,Env).
+
+:- document_export type_check_program/3.
+:- comment(doinclude,type_check_program/3).
+:- comment(type_check_program/3, "Implements the TProg rule for type
+          checking a program. First we create the typing environment
+          for each clause using @pred{create_env/2}, and then we type
+          check each clause in turn using @pred{well_typed_rule/3}
+          ").
+type_check_program(_,[],_).
+type_check_program(List,[Rule|Rules],_) :-
+	member([_Num,Rule],List),
+	excess_vars(Rule,[],[],Vars),
+	( Vars == []
+	-> Gamma = []
+	; create_env(Vars,Gamma)
+	),
+        well_typed_rule(Gamma,Rule), %!,
+        type_check_program(List,Rules,_).
+
+:- document_export type_check_file/1.
+:- comment(doinclude,type_check_file/1).
+:- comment(type_check_file/1, "Type checks a single Prolog source
+        file. We first make sure it is indeed an XSB file (by looking
+          at the '.P' extension), and then the file is loaded so that
+          it can be type checked by term expansion when the
+          @apl{end_of_file} atom is encountered.
+          ").
+%:- export type_check_file/1.
+:- import concat_atom/2 from string.
+type_check_file([File]) :- 
+	atom_codes(File,FileCodes),
+	append(FileCodes,".P",TFileCodes),
+	atom_codes(TFile,TFileCodes),
+	write('Type checking: '), writeln(TFile),
+	[TFile].
+
+% Predefined type constructors for arithmetic operations
+:- assert('_$$type_type_decl'(+(_,_),ftype([T:number,T:number],T:number))).
+:- assert('_$$type_type_decl'(-(_,_),ftype([T:number,T:number],T:number))).
+:- assert('_$$type_type_decl'(*(_,_),ftype([T:number,T:number],T:number))).
+:- assert('_$$type_type_decl'(/(_,_),ftype([T:number,T:number],T:number))).
+:- assert('_$$type_typed_pred'(is/2,[T:number,T:number])).
+
+% Cleanup
+:- document_export '_$$type_cleanup'/0.
+:- comment(doinclude,'_$$type_cleanup'/0).
+:- comment('_$$type_cleanup'/0, "Used for cleaning up the database
+          after type checking is performed, by retracting all the
+          dynamic facts asserted.
+          ").
+'_$$type_cleanup' :-
+	retractall('_$$type_type_decl'(_,_)),
+	retractall('_$$type_typed_pred'(_,_)),
+	retractall('_$$type_env_finalize'),
+	retractall('_$$type_rule'(_)),
+	retractall('_$$type_res'(_)),
+	retractall('_$$type_numrule'(_,_)).
+
+% Error Reporting
+:- document_export write_type_error/3.
+:- comment(doinclude,write_type_error/3).
+:- comment(write_type_error/3, "Prints type error information in the
+          console, by first appropriately removing all annotations
+          (attributes) from type (Prolog) variables. Information about
+          the expected kind of each type is also printed:
+          @begin{itemize}
+          @item @tt{u} states that a @em{universally} typed argument
+          was expected
+          @item @tt{e} states that an @em{existentially} typed argument
+          was expected
+          @item @tt{m} states that a @em{mutably} typed argument
+          was expected
+          @end{itemize}
+          ").
+
+:- table write_type_error/3.
+write_type_error(Pred,ExpectedType,UsedType) :- 
+	used_type(UsedType,UType,M1),
+	expected_type(ExpectedType,EType,M),
+	pretty_print(Pred,PPred),
+	write('Type error for '),  write(PPred),
+	write(': type used is '), 
+	write(UType), write(' '), write(M1),
+	write(', type expected is '), 
+	write(EType), write(' '), writeln(M).
+
+pretty_print(Pred,PPred) :-
+	Pred =.. [Name|Args],
+	maplist(remove_attrs,Args,PArgs),
+	PPred =.. [Name|PArgs].
+
+remove_attrs(X,Y) :-
+	var(X), !, del_attr(X,psub), X = Y.
+remove_attrs(^X,Y) :-
+	del_attr(X,psub), X = Y.
+remove_attrs(X,X) :-
+	ground(X).
+
+expected_type([],[],[]).
+expected_type([T|Ts],[ET|ETs],[M|Ms]) :-
+	expected_type1(T,ET,M),
+	expected_type(Ts,ETs,Ms).
+expected_type1(Var:Type,EType,u) :-
+	var(Var), !,
+	EType = Type.
+expected_type1(^_Var:Type,EType,e) :-
+	EType = Type.
+
+used_type([],[],[]).
+used_type([V|Vs],[UT|UTs],[M|Ms]) :-
+	used_type1(V,UT,M),
+	used_type(Vs,UTs,Ms).
+used_type1(Var,UType,Mode) :-
+	var(Var), !,
+	get_attribute(Var,UType,Mode).
+used_type1(^Var,UType,Mode) :-
+	get_attribute(Var,UType,Mode).
+
+get_attribute(Var,Type,g) :-
+	get_attr(Var,psub,atv(Type,_,_,_)),
+	nonvar(Type), !.
+get_attribute(Var,Type,u) :-
+	get_attr(Var,psub,atv(_,Type,_,_)),
+	nonvar(Type), !.
+get_attribute(Var,Type,e) :-
+	get_attr(Var,psub,atv(_,_,Type,_)),
+	nonvar(Type), !.
+get_attribute(Var,Type,m) :-
+	get_attr(Var,psub,atv(_,_,_,Type)),
+	nonvar(Type).
+
+
+end_of_file.
+write_type_error(Pred,ExpectedType,UsedType) :-
+	writeln(ExpectedType), writeln(UsedType).
+
+
+
+

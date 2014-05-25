@@ -1,0 +1,12 @@
+#!/bin/bash
+# Call this script with the directory where each test file resides as
+# an argument. Note that each test file must have a ':- res ok/fail.'
+# annotation 
+
+for file in $1/*
+do
+	if [ -f "$file" ]; then
+	./test ${file%%.*}
+	fi
+done
+make

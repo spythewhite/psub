@@ -1,0 +1,17 @@
+:- op(1150, fx, type).
+:- op(1130, xfx, ---> ).
+:- op(1150, fx, pred).
+:- op(1150, fx, trust_pred).
+:- op(1150, fx, env).
+:- op(1150, fx, res).
+:- op(500,yfx,::).
+:- op(500,yfx,:<).
+:- op(500,xfx,<:).
+:- op(500,xfx,`).
+:- op(500,fx,^).
+
+gen :-
+	[xsbdoc],
+	assert('_$$type_res'(ok)),
+	xsbdoc1:xsbdoc(psub_manual,pdf),
+	xsbdoc1:make_distclean.

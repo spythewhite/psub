@@ -1,0 +1,26 @@
+@apl{P<:} is a type system with @em{parametric} and @em{subtyping}
+polymorphism for Prolog @cite{spyros}. This module is an
+implementation of @apl{P<:} in XSB; it preprocesses a @tt{Prolog}
+program by performing type analysis, and prints out whether the
+program was @tt{well} or @tt{ill} typed, along with useful debugging
+information. 
+
+@section{Usage}
+In order to (currently) use @apl{psub}, simply load @file{psub.P} in
+@apl{XSB}:
+
+@begin{verbatim}
+	|?- [psub].
+@end{verbatim}
+
+@noindent
+and then load your XSB source file:
+
+@begin{verbatim}
+	|?- [foo].
+@end{verbatim}
+
+@noindent
+Your source file will then be type checked, and an appropriate message
+will be printed out, depending on whether the program was well-typed,
+or ill-typed.

@@ -1,0 +1,104 @@
+@section{Introduction}
+This module implements the @apl{P<:} type system, with heavy usage of
+@em{attributed variables} for the representation of @em{annotations}
+on type variables, as described in @cite{spyros}. The user only needs
+to include @em{type declarations} in her program, and @apl{psub} type
+checks the program using those declarations as @em{contracts} between
+the programmer and the system.
+
+@noindent
+There are two kinds of types that @apl{P<:} supports; @em{universal}
+and @em{existential} types, or more precisely, universally and
+existentially quantified type variables. Universally typed predicates
+can be thought as @em{black boxes} by the programmer; she does not
+need to know how the definition looks like, or how execution will move
+through the predicate's definition. The only thing she needs to know
+is the @em{bound} of each type variable in the type of such predicate,
+so that she can make sure each usage will be well-typed. Examples of
+such predicates are, among others, our friend @pred{append/3},
+@pred{member/2}, @pred{length/2} and so on.
+
+@noindent
+On the other hand, existentially typed predicates can be thought as
+predicates where each definition uses a @em{different} type, but the
+types of all definitions can be gathered under the umbrella of a
+bigger supertype. In this case, @em{type-mode} information is needed
+to @em{statically} ensure well-typedness. Examples of such predicates
+include situations where relations are used to describe a database,
+hence all definitions appear as facts:
+
+@begin{verbatim}
+employee(0,alan,42).
+employee(1,kurt,3.14).
+employee(2,david,10).
+@end{verbatim}
+
+@noindent
+In this case, the third argument can either be a @tt{float} or
+@tt{integer}, and we map these two possibilities under a bigger type,
+i.e. @tt{number}.
+
+@section{Typing Declarations}
+Typing declarations in @apl{psub} include both type signatures for
+predicates, and for type constructors. Type signatures for predicates
+are declared using the following syntax:
+
+@begin{verbatim}
+:- pred name(T1,T2,...).
+@end{verbatim}
+
+@noindent
+Where @tt{T1,T2,...} are the types corresponding to each argument. The
+format of each such type is
+
+@begin{verbatim}
+T:type
+@end{verbatim}
+
+@noindent
+where @tt{T} is the name of a type variable, and @tt{type} is a
+@em{primitive} type, i.e. @em{integer, float, atom, atomic, number,
+any}. The above declaration states that @tt{T} is a @em{universally}
+quantified type variable; @em{existentially} quantified type variables
+are declared by appending a @em{carret} character in front of the
+variable name:
+
+@begin{verbatim}
+^T:type
+@end{verbatim}
+
+@noindent
+For example, the type of the @pred{employee/3} predicate from above
+would be declared as
+
+@begin{verbatim}
+:- pred employee(^T:integer,^S:atom,^W:number).
+@end{verbatim}
+
+@noindent
+And the type of @pred{append/3} as
+
+@begin{verbatim}
+:- pred append(list(T:any),list(T:any),list(T:any)).
+@end{verbatim}
+
+@noindent
+Types for type constructors are declared using the syntax
+
+@begin{verbatim}
+:- type fsym(T1,T2,...) -> (T).
+@end{verbatim}
+
+@noindent
+Each of the @tt{T1,T2,...} is the type of each argument, just like
+before, and @tt{(T)} is the function symbol's @em{return type}. For
+example, the type of the list constructor is declared as
+
+@begin{verbatim}
+:- type [T:any|list(T:any)] -> list(T:any).
+:- type [] -> list(T:any).
+@end{verbatim}
+
+@noindent
+Where the first declaration is used for non-empty lists, and the
+second for empty lists.

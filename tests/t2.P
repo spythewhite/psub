@@ -1,0 +1,9 @@
+% Well-typed
+:- pred p(^T:number).
+:- pred q(^S:number).
+%:- env e([r(1,[integer]),r(2,[])]).
+:- res ok. % when inferring Gamma
+%:- res fail. % when this Gamma is given
+
+p(X) :- q(X).
+q(2) :- true.
