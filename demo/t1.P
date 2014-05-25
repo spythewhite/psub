@@ -1,8 +1,0 @@
-% Should be well-typed, but we mistakenly quantify p/1 and q/1 as universal 
-% Replace T with ^T and S with ^S to make program well-typed
-:- pred p(^T:number).
-:- pred q(^S:number).
-:- res ok.
-
-p(X) :- q(X).
-q(2) :- true.

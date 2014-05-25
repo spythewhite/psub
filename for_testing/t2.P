@@ -1,6 +1,0 @@
-% Well-typed
-:- type [] -> list(T:any).
-:- pred p(list(T:atomic)).
-:- res ok.
-
-p([]).
