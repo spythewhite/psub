@@ -1,2 +1,6 @@
 Implementation for the P<: Type System in XSB-Prolog
-See psub.pdf for details
+See psub.pdf for details on the implementation
+
+To run the tests:
+./testall tests
+(assuming XSB is in your $PATH)
